@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
@@ -147,10 +146,7 @@ func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video
 		return video, nil
 	}
 	key := strings.Join(parts[3:], "/")
-	signedURL, err := generatePresignedURL(cfg.s3Client, cfg.s3Bucket, key, 15*time.Minute)
-	if err != nil {
-		return video, err
-	}
-	video.VideoURL = &signedURL
+	cloudfrontURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
+	video.VideoURL = &cloudfrontURL
 	return video, nil
 }

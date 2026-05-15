@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -150,9 +148,9 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Update the video metadata with the S3 URL
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, key)
-	metadata.VideoURL = &videoURL
+	// Update the video metadata with the CloudFront URL instead of S3 URL
+	cloudfrontURL := fmt.Sprintf("https://%s/%s", cfg.s3CfDistribution, key)
+	metadata.VideoURL = &cloudfrontURL
 
 	// Save the updated metadata to the database
 	err = cfg.db.UpdateVideo(metadata)
@@ -160,29 +158,9 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video metadata", err)
 		return
 	}
-
-	metadata, err = cfg.dbVideoToSignedVideo(metadata)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't sign video URL", err)
-		return
-	}
-
-	// Respond with the updated metadata
+	// The metadata now contains the CloudFront URL, so no further processing is needed for the response.
 	respondWithJSON(w, http.StatusOK, metadata)
 }
-
-func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
-	presignClient := s3.NewPresignClient(s3Client)
-	presignedUrl, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-	}, s3.WithPresignExpires(expireTime))
-	if err != nil {
-		return "", err
-	}
-	return presignedUrl.URL, nil
-}
-
 func getVideoAspectRatio(filePath string) (string, error) {
 	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-select_streams", "v:0", filePath)
 	var stdout bytes.Buffer
