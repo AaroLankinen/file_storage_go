@@ -113,6 +113,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	processedVideoPath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video for fast start", err)
+		return
+	}
+	defer os.Remove(processedVideoPath)
+
+	// Open the processed video file for uploading to S3
+	tempFile, err = os.Open(processedVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video file", err)
+		return
+	}
+	defer tempFile.Close()
+
 	// Generate a random key for the video in S3
 	randomBytes := make([]byte, 32)
 	if _, err := rand.Read(randomBytes); err != nil {
@@ -180,4 +195,13 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "9:16", nil
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputPath := filePath + ".faststart.mp4"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-movflags", "faststart", "-c", "copy", outputPath)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return outputPath, nil
 }
