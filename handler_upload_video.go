@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -87,6 +91,22 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't determine video aspect ratio", err)
+		return
+	}
+
+	var prefix string
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape/"
+	case "9:16":
+		prefix = "portrait/"
+	default:
+		prefix = "other/"
+	}
+
 	// Seek to the beginning of the file so it can be read from the start when uploading to S3
 	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't reset temp file pointer", err)
@@ -99,7 +119,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random key", err)
 		return
 	}
-	key := hex.EncodeToString(randomBytes) + ".mp4"
+	key := prefix + hex.EncodeToString(randomBytes) + ".mp4"
 
 	// Upload the video to S3
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
@@ -126,4 +146,38 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	// Respond with the updated metadata
 	respondWithJSON(w, http.StatusOK, metadata)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-select_streams", "v:0", filePath)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	var output struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		return "", err
+	}
+
+	if len(output.Streams) == 0 {
+		return "", fmt.Errorf("no video streams found")
+	}
+
+	ratio := float64(output.Streams[0].Width) / float64(output.Streams[0].Height)
+	const threshold = 0.01 // 1% leeway
+
+	if math.Abs(ratio-16.0/9.0) < threshold {
+		return "16:9", nil
+	}
+	if math.Abs(ratio-9.0/16.0) < threshold {
+		return "9:16", nil
+	}
+	return "other", nil
 }
