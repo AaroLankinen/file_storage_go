@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -159,8 +161,26 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	metadata, err = cfg.dbVideoToSignedVideo(metadata)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't sign video URL", err)
+		return
+	}
+
 	// Respond with the updated metadata
 	respondWithJSON(w, http.StatusOK, metadata)
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	presignClient := s3.NewPresignClient(s3Client)
+	presignedUrl, err := presignClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		return "", err
+	}
+	return presignedUrl.URL, nil
 }
 
 func getVideoAspectRatio(filePath string) (string, error) {

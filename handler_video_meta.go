@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
@@ -95,6 +98,12 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	video, err = cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't sign video URL", err)
+		return
+	}
+
 	respondWithJSON(w, http.StatusOK, video)
 }
 
@@ -116,5 +125,32 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	for i, video := range videos {
+		signedVideo, err := cfg.dbVideoToSignedVideo(video)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Couldn't sign video URL", err)
+			return
+		}
+		videos[i] = signedVideo
+	}
+
 	respondWithJSON(w, http.StatusOK, videos)
+}
+
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+
+	parts := strings.Split(*video.VideoURL, "/")
+	if len(parts) < 4 || parts[2] != fmt.Sprintf("%s.s3.%s.amazonaws.com", cfg.s3Bucket, cfg.s3Region) {
+		return video, nil
+	}
+	key := strings.Join(parts[3:], "/")
+	signedURL, err := generatePresignedURL(cfg.s3Client, cfg.s3Bucket, key, 15*time.Minute)
+	if err != nil {
+		return video, err
+	}
+	video.VideoURL = &signedURL
+	return video, nil
 }
